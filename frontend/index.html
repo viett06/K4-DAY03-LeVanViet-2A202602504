@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VinUni Day 03 — Chatbot vs ReAct Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">
+        <div class="mark">VU</div>
+        <div>
+          <p class="brand-kicker">VinUni AI · Day 03</p>
+          <h1>Chatbot vs ReAct</h1>
+        </div>
+      </div>
+
+      <section class="panel">
+        <h2>Hệ thống</h2>
+        <dl class="status" id="statusList">
+          <div><dt>Provider</dt><dd id="stProvider">…</dd></div>
+          <div><dt>Model</dt><dd id="stModel">…</dd></div>
+          <div><dt>MCP</dt><dd id="stMcp">…</dd></div>
+          <div><dt>Memory</dt><dd id="stMemory">…</dd></div>
+        </dl>
+        <p class="live-flag" id="liveFlag">Đang kiểm tra API…</p>
+      </section>
+
+      <section class="panel">
+        <h2>Chế độ demo</h2>
+        <div class="mode-switch" role="tablist">
+          <button class="mode on" data-mode="react" type="button">ReAct Agent</button>
+          <button class="mode" data-mode="chatbot" type="button">Chatbot Cấp 2</button>
+        </div>
+        <p class="hint" id="modeHint">Cấp 3: Thought → Action → Observation qua MCP.</p>
+      </section>
+
+      <section class="panel">
+        <h2>5 Test Cases</h2>
+        <div class="tests" id="testList"></div>
+      </section>
+
+      <section class="panel grow">
+        <h2>Tools MCP</h2>
+        <ul class="tools" id="toolList"></ul>
+      </section>
+    </aside>
+
+    <main class="stage">
+      <header class="stage-bar">
+        <div>
+          <p class="eyebrow">Observability console</p>
+          <h2 id="stageTitle">ReAct Agent · Học vụ VinUni</h2>
+        </div>
+        <div class="pills">
+          <span class="pill" id="pillTools">0 tools</span>
+          <span class="pill" id="pillMem">0 prompt cũ</span>
+        </div>
+      </header>
+
+      <div class="transcript" id="transcript">
+        <div class="empty" id="emptyState">
+          <p class="empty-kicker">Bắt đầu demo</p>
+          <h3>Hỏi trợ lý học vụ, hoặc bấm một test case bên trái.</h3>
+          <p>Mỗi lượt ReAct hiện Thought, Tool Call, Observation MCP và Final Answer — đúng waterfall nộp bài.</p>
+        </div>
+      </div>
+
+      <form class="composer" id="chatForm">
+        <textarea id="chatInput" rows="2" placeholder="Ví dụ: Tra cứu học vụ SV2026001…" required></textarea>
+        <button type="submit" id="sendBtn">Gửi</button>
+      </form>
+    </main>
+
+    <aside class="memory-rail">
+      <h2>10 prompt cũ</h2>
+      <p class="hint">Redis / RAM theo machine_id. Gắn vào system_message với nhãn [OLD_PROMPT].</p>
+      <ol class="memory" id="memoryList">
+        <li class="muted">Chưa có lịch sử.</li>
+      </ol>
+    </aside>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

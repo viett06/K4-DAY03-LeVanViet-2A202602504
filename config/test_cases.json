@@ -1,0 +1,37 @@
+[
+  {
+    "id": "TC01",
+    "type": "direct_query",
+    "question": "Chào bạn, bạn có thể giới thiệu quy chế học vụ cơ bản của Đại học VinUni không? Sinh viên cần tích lũy bao nhiêu tín chỉ và GPA tối thiểu để tốt nghiệp?",
+    "expected_behavior": "Chạy Chatbot Baseline (Cấp 2) — trả lời 120 tín chỉ / GPA 2.0 từ System Prompt, không vào ReAct, không gọi Tool.",
+    "complexity": "Low"
+  },
+  {
+    "id": "TC02",
+    "type": "single_tool_query",
+    "question": "Hãy tra cứu thông tin học vụ của sinh viên SV2026001, bao gồm họ tên, lớp, GPA và cố vấn học tập.",
+    "expected_behavior": "Agent gọi tool academic_query với student_id=SV2026001 và trả lời dựa trên Observation, không bịa dữ liệu.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC03",
+    "type": "appointment_booking",
+    "question": "Hãy đặt lịch hẹn tư vấn học vụ cho sinh viên SV2026001 với PGS.TS Nguyễn Văn A vào lúc 14:00 ngày 15/09/2026.",
+    "expected_behavior": "Agent gọi tool schedule_appointment với student_id=SV2026001, datetime_str chứa 14:00 15/09/2026, advisor_name=PGS.TS Nguyễn Văn A.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC04",
+    "type": "multi_step_reasoning",
+    "question": "Hãy tra cứu hồ sơ học vụ của sinh viên SV2026001 để biết cố vấn học tập là ai, sau đó đặt lịch hẹn tư vấn với đúng cố vấn đó vào 09:00 ngày 20/09/2026.",
+    "expected_behavior": "Agent suy luận ReAct đa bước: academic_query SV2026001 trước, lấy advisor, rồi schedule_appointment với advisor thật và thời gian 09:00 20/09/2026.",
+    "complexity": "High"
+  },
+  {
+    "id": "TC05",
+    "type": "edge_case_handling",
+    "question": "Hãy tra cứu thông tin học vụ của sinh viên SV9999999.",
+    "expected_behavior": "Agent gọi academic_query, nhận NOT_FOUND, phản hồi lịch sự và không bịa hồ sơ sinh viên.",
+    "complexity": "Medium"
+  }
+]

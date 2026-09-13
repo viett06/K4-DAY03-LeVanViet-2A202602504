@@ -18,10 +18,12 @@ if sys.stdout.encoding != 'utf-8':
         pass
 
 from mcp_server import MCPAcademicServer
+from memory import ConversationMemory, new_request_id
 from prompts import (
     CHATBOT_BASELINE_PROMPT,
     REACT_AGENT_SYSTEM_PROMPT,
-    MAX_ITERATIONS
+    MAX_ITERATIONS,
+    build_system_prompt_with_memory
 )
 from providers import get_llm_provider
 
@@ -54,20 +56,67 @@ def save_waterfall_trace(trace_data: list):
     print(f"📊 [OBSERVABILITY]: Đã lưu {len(trace_data)} sự kiện Waterfall Trace tại '{trace_path}'!")
 
 
-def run_baseline_chatbot(user_query: str, provider):
+def is_baseline_case(tc: dict) -> bool:
+    """TC01 / direct_query chỉ chạy Chatbot Baseline, không vào ReAct loop."""
+    return (tc.get("type") or "").lower() == "direct_query" or (tc.get("id") or "").upper() == "TC01"
+
+
+def run_baseline_chatbot(user_query: str, provider) -> list:
     """Chạy Chatbot gốc (Cấp 2) không có công cụ gọi Tool"""
     print(f"\n💬 [CHATBOT BASELINE] Câu hỏi: {user_query}")
+    started = time.time()
     response = provider.generate(user_query, system_prompt=CHATBOT_BASELINE_PROMPT)
+    latency_ms = round((time.time() - started) * 1000, 2)
     print(f"🤖 Chatbot phản hồi:\n{response}")
+    return [{
+        "step": 1,
+        "query": user_query,
+        "action_type": "FINAL_ANSWER",
+        "mode": "chatbot_baseline",
+        "thought": "Câu hỏi kiến thức chung — Chatbot Cấp 2 trả lời từ System Prompt, không gọi Tool / MCP.",
+        "output": response,
+        "latency_ms": latency_ms
+    }]
 
 
-def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) -> list:
+def _compose_final_answer(obs_data: dict) -> str:
+    """Tổng hợp câu trả lời từ Observation; hỗ trợ cả hồ sơ SV và các tool trả message/list."""
+    if obs_data.get("status") == "SUCCESS":
+        if obs_data.get("message"):
+            return obs_data["message"]
+        data = obs_data.get("data")
+        if isinstance(data, dict) and "full_name" in data:
+            return (
+                f"Kết quả tra cứu cho sinh viên {obs_data.get('student_id', '')} ({data.get('full_name', '')}): "
+                f"Lớp {data.get('class', '')}, GPA: {data.get('gpa', '')}, Email: {data.get('email', '')}, "
+                f"Trạng thái: {data.get('status', '')}, Cố vấn: {data.get('advisor', '')}."
+            )
+        return f"Đã hoàn tất xử lý qua MCP Server: {json.dumps(obs_data, ensure_ascii=False)}"
+    if obs_data.get("status") == "NOT_FOUND":
+        return obs_data.get("message", "Không tìm thấy thông tin sinh viên yêu cầu.")
+    return f"Phản hồi từ công cụ: {json.dumps(obs_data, ensure_ascii=False)}"
+
+
+def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer, memory: ConversationMemory = None) -> list:
     """
     [REACT AGENT LOOP] Thực thi vòng lặp Thought -> Action -> Observation với MCP Server
     Trả về danh sách trace log của phiên thực thi.
     """
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
-    
+
+    request_id = new_request_id()
+    old_prompts = memory.get_recent(limit=10) if memory else []
+    system_prompt = build_system_prompt_with_memory(
+        REACT_AGENT_SYSTEM_PROMPT,
+        old_prompts,
+        memory.machine_id if memory else "unknown"
+    )
+    if memory:
+        print(
+            f"🧠 [MEMORY] backend={memory.backend} machine_id={memory.machine_id} "
+            f"request_id={request_id} old_prompts={len(old_prompts)}"
+        )
+
     step = 0
     trace_logs = []
     tools_list = mcp_server.list_tools()
@@ -77,8 +126,8 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
         step_start_time = time.time()
         print(f"\n--- 🔄 Vòng lặp ReAct Loop (Step {step}/{MAX_ITERATIONS}) ---")
         
-        # Gọi LLM với Native Tool Calling Specs
-        llm_response = provider.generate_with_tools(user_query, tools_list, system_prompt=REACT_AGENT_SYSTEM_PROMPT)
+        # Gọi LLM với Native Tool Calling Specs + system_message chứa prompt cũ
+        llm_response = provider.generate_with_tools(user_query, tools_list, system_prompt=system_prompt)
         latency_ms = round((time.time() - step_start_time) * 1000, 2)
         
         thought = llm_response.get("thought", "Đang suy luận...")
@@ -94,6 +143,7 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
                 "action_type": "FINAL_ANSWER",
                 "thought": thought,
                 "output": final_content,
+                "request_id": request_id,
                 "latency_ms": latency_ms
             })
             break
@@ -116,24 +166,7 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
             else:
                 obs_str = json.dumps(obs_data, ensure_ascii=False)
                 print(f"👁️ [Observation từ MCP Server]: {obs_str}")
-                
-                # Tổng hợp Final Answer từ kết quả Observation thực tế
-                if obs_data.get("status") == "SUCCESS":
-                    if "data" in obs_data:
-                        d = obs_data["data"]
-                        final_answer = (
-                            f"Kết quả tra cứu cho sinh viên {obs_data.get('student_id', '')} ({d.get('full_name', '')}): "
-                            f"Lớp {d.get('class', '')}, GPA: {d.get('gpa', '')}, Email: {d.get('email', '')}, "
-                            f"Trạng thái: {d.get('status', '')}, Cố vấn: {d.get('advisor', '')}."
-                        )
-                    elif "message" in obs_data:
-                        final_answer = obs_data["message"]
-                    else:
-                        final_answer = f"Đã hoàn tất xử lý qua MCP Server: {json.dumps(obs_data, ensure_ascii=False)}"
-                elif obs_data.get("status") == "NOT_FOUND":
-                    final_answer = obs_data.get("message", "Không tìm thấy thông tin sinh viên yêu cầu.")
-                else:
-                    final_answer = f"Phản hồi từ công cụ: {json.dumps(obs_data, ensure_ascii=False)}"
+                final_answer = _compose_final_answer(obs_data)
             
             trace_logs.append({
                 "step": step,
@@ -142,6 +175,7 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
                 "tool_name": tool_name,
                 "arguments": arguments,
                 "observation": obs_data,
+                "request_id": request_id,
                 "latency_ms": latency_ms
             })
             
@@ -155,9 +189,13 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
                 "action_type": "FINAL_ANSWER",
                 "thought": "Tổng hợp kết quả từ MCP Server thành công.",
                 "output": final_answer,
+                "request_id": request_id,
                 "latency_ms": 10.0
             })
             break
+
+    if memory:
+        memory.append_user_prompt(user_query, request_id=request_id)
 
     return trace_logs
 
@@ -169,6 +207,7 @@ if __name__ == "__main__":
     
     provider = get_llm_provider()
     mcp_server = MCPAcademicServer()
+    memory = ConversationMemory()
     
     print(f"🔌 LLM Provider: {provider.__class__.__name__}")
     print(f"🌐 MCP Server: {mcp_server.server_name}\n")
@@ -189,7 +228,7 @@ if __name__ == "__main__":
                 if not user_input or user_input.lower() in ["exit", "quit"]:
                     print("👋 Tạm biệt! Kết thúc phiên trò chuyện.")
                     break
-                logs = run_react_agent(user_input, provider, mcp_server)
+                logs = run_react_agent(user_input, provider, mcp_server, memory=memory)
                 save_waterfall_trace(logs)
             except (KeyboardInterrupt, EOFError):
                 print("\n👋 Đã thoát phiên tương tác.")
@@ -211,7 +250,11 @@ if __name__ == "__main__":
                 print(f"   👉 Hãy mở file 'config/test_cases.json' để viết câu hỏi thực tế cho Test Case này!")
                 todo_count += 1
             else:
-                logs = run_react_agent(tc["question"], provider, mcp_server)
+                if is_baseline_case(tc):
+                    print("➡️  TC01 là direct_query: chỉ chạy Chatbot Baseline (Cấp 2), không vào ReAct Agent.")
+                    logs = run_baseline_chatbot(tc["question"], provider)
+                else:
+                    logs = run_react_agent(tc["question"], provider, mcp_server, memory=memory)
                 all_traces.extend(logs)
                 completed_count += 1
                 
@@ -228,6 +271,6 @@ if __name__ == "__main__":
         
         sample_query = tests[1]["question"]
         print(f"--- 🏁 DEMO CHẠY THỬ 1 TEST CASE MẪU (TC02: Tra cứu học vụ) ---")
-        logs = run_react_agent(sample_query, provider, mcp_server)
+        logs = run_react_agent(sample_query, provider, mcp_server, memory=memory)
         save_waterfall_trace(logs)
         print("\n💡 Hãy thử ngay lệnh: python src/app.py --interactive để chat trực tiếp!")

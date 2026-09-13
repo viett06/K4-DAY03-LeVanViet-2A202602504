@@ -135,18 +135,42 @@ class GeminiProvider(BaseLLMProvider):
             return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
 
 
+_PLACEHOLDER_KEYS = {
+    "",
+    "your_openai_api_key_here",
+    "your_llama_api_key_here",
+    "your_gemini_api_key_here",
+    "your_anthropic_api_key_here",
+}
+
+
+def _first_real_key(*env_names: str) -> str:
+    for name in env_names:
+        value = (os.getenv(name) or "").strip()
+        if value and value not in _PLACEHOLDER_KEYS:
+            return value
+    return ""
+
+
 class OpenAIProvider(BaseLLMProvider):
-    """OpenAI Provider (Native Tool Calling với OpenAI SDK)"""
+    """OpenAI-compatible Provider (OpenAI, Llama, Groq, OpenRouter, Ollama)."""
     def __init__(self, api_key: str = None, model: str = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.model_name = model or os.getenv("LLM_MODEL") or "gpt-4o-mini"
+        self.api_key = api_key or _first_real_key("LLAMA_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY")
+        self.model_name = model or os.getenv("LLM_MODEL") or "llama-3.3-70b-versatile"
+        self.base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL")
+
+    def _client(self):
+        from openai import OpenAI
+        kwargs = {"api_key": self.api_key}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        return OpenAI(**kwargs)
 
     def generate(self, prompt: str, system_prompt: str = "") -> str:
-        if not self.api_key or self.api_key == "your_openai_api_key_here":
-            return "[OpenAI Error]: Chưa cấu hình OPENAI_API_KEY trong file .env! Đang sử dụng chế độ Mock."
+        if not self.api_key:
+            return "[OpenAI Error]: Chưa cấu hình LLAMA_API_KEY hoặc OPENAI_API_KEY trong file .env! Đang sử dụng chế độ Mock."
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            client = self._client()
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
@@ -157,13 +181,12 @@ class OpenAIProvider(BaseLLMProvider):
             return f"[OpenAI Exception]: {str(e)}"
 
     def generate_with_tools(self, prompt: str, tools_schema: List[Dict[str, Any]], system_prompt: str = "") -> Dict[str, Any]:
-        if not self.api_key or self.api_key == "your_openai_api_key_here":
-            print("ℹ️ [OpenAI Provider]: Chưa tìm thấy OPENAI_API_KEY hợp lệ. Tự động chuyển sang Mock Offline.")
+        if not self.api_key:
+            print("ℹ️ [OpenAI Provider]: Chưa tìm thấy LLAMA_API_KEY / OPENAI_API_KEY hợp lệ. Tự động chuyển sang Mock Offline.")
             return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
 
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            client = self._client()
 
             tools = []
             for tool in tools_schema:
@@ -221,12 +244,11 @@ def get_llm_provider() -> BaseLLMProvider:
             return GeminiProvider()
         else:
             return MockOfflineProvider()
-    elif provider_type == "openai":
-        key = os.getenv("OPENAI_API_KEY")
-        if key and key != "your_openai_api_key_here":
-            return OpenAIProvider()
-        else:
-            return MockOfflineProvider()
+    elif provider_type in ("openai", "llama", "groq", "openrouter", "ollama"):
+        key = _first_real_key("LLAMA_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY")
+        if key:
+            return OpenAIProvider(api_key=key)
+        return MockOfflineProvider()
     elif provider_type == "mock":
         return MockOfflineProvider()
     else:
